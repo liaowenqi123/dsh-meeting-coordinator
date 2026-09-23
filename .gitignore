@@ -1,6 +1,19 @@
-# 依赖与构建产物
+# 依赖
 node_modules/
-dist/
+
+# ⚠️ dist/ **故意提交进仓库**，不要加回忽略列表。
+#
+# 原因（实测，不是猜的）：本包是 TypeScript 项目，如果靠 `prepare` 脚本在安装时
+# 构建，那么从 GitHub 安装会直接失败：
+#
+#   ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED
+#   The git-hosted package "dsh-meeting-coordinator@0.1.0" needs to execute build
+#   scripts but is not in the "allowBuilds" allowlist.
+#
+# 也就是说 pnpm ≥10 默认**不允许**依赖执行构建脚本，而插件市场装未上 npm 的包走的
+# 正是 github spec。把构建产物一并提交，安装路径就完全不需要构建脚本了。
+#
+# 代价：改了 src/ 必须 `pnpm run build` 并把 dist/ 一起提交。见 README 的贡献章节。
 
 # 运行期数据（会议、简报、转录）
 .dsh-meeting/

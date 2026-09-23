@@ -15,41 +15,19 @@
       {
         "apiVersion": "meeting.dsh/v1alpha1",
         "kind": "BriefingBoard"
-      },
-      {
-        "apiVersion": "messages.dsh/v1alpha1",
-        "kind": "MessageObserver",
-        "optional": true,
-        "fallback": "不观察会话消息，例会仅由定时/轮次/停滞/成员召集驱动"
       }
     ],
     "services": []
   },
   "permissions": [
     {
-      "name": "commands",
-      "scope": "meeting.coordinator.commands",
-      "reason": "注册 /meeting 与 /meeting-status 命令，让人类可以手动召集例会并查看例会状态。"
-    },
-    {
       "name": "messages.observe",
-      "scope": "meeting.coordinator.briefing-harvest",
-      "reason": "在启用自动收集时，从会话消息里提取成员简报；未授权时退回成员主动提交。"
+      "scope": "meeting.coordinator.participant-context",
+      "reason": "开会时读取参会会话已完成的轮上下文，作为该成员入场的记忆。默认走 fork（由其自带），fork 不可用时回退为限长摘要注入。不读不会议的会话。"
     }
   ],
   "contributes": {
-    "commands": [
-      {
-        "id": "meeting.coordinator.convene",
-        "title": "召集例会",
-        "description": "立即召集一次大会或小会，收集全体成员简报并广播汇总摘要。"
-      },
-      {
-        "id": "meeting.coordinator.status",
-        "title": "例会状态",
-        "description": "显示各成员最新简报、停滞信号与上次会议记录。"
-      }
-    ],
+    "commands": [],
     "panels": []
   },
   "subscriptions": [],

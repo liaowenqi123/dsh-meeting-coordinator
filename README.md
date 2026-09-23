@@ -4,6 +4,7 @@
 > 基于 [dsh-std](https://github.com/Yan-Zero/dsh-std) 元协议开发，为 DeepSeek Harness 提供多 Agent 协作。
 
 [![DSH Plugin](https://img.shields.io/badge/DSH-Plugin-blue)](#安装)
+[![CI](https://github.com/liaowenqi123/dsh-meeting-coordinator/actions/workflows/ci.yml/badge.svg)](https://github.com/liaowenqi123/dsh-meeting-coordinator/actions/workflows/ci.yml)
 [![dsh-std](https://img.shields.io/badge/dsh--std-Community%20v0.15-green)](https://github.com/Yan-Zero/dsh-std)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](#快速开始)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
@@ -288,9 +289,23 @@ expect(new Set(notes.map(n => n.text)).size).toBe(3)   // 每人不同
 ```bash
 git clone https://github.com/liaowenqi123/dsh-meeting-coordinator.git
 cd dsh-meeting-coordinator
-pnpm install        # 会自动跑 prepare → tsc 构建出 dist/
-pnpm run build      # 需要手动重建时用（和上一步等价）
+pnpm install        # 只装依赖。dist/ 已随仓库提交，装完即可被 DSH 加载
+pnpm run build      # 只有在改了 src/ 之后才需要
 ```
+
+> **为什么 `dist/` 要提交进仓库？** 这是实测踩出来的，不是偷懒。
+>
+> 如果靠 `prepare` 脚本在安装时构建，那么从 GitHub 安装会**直接失败**：
+>
+> ```
+> ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED
+> The git-hosted package "dsh-meeting-coordinator@0.1.0" needs to execute build
+> scripts but is not in the "allowBuilds" allowlist.
+> ```
+>
+> pnpm ≥10 默认**不允许依赖执行构建脚本**，而插件市场安装未上 npm 的包走的正是
+> github spec。把构建产物一并提交，整条安装路径就完全不需要构建脚本了。
+> 代价只有一个：**改了 `src/` 必须 `pnpm run build` 并把 `dist/` 一起提交**（见[贡献章节](#欢迎贡献反馈与已知不足)）。
 
 ### 装进 DeepSeek Harness
 
@@ -299,8 +314,8 @@ pnpm run build      # 需要手动重建时用（和上一步等价）
 ```bash
 # 以 web profile 为例
 cd ~/.dsh/profiles/web
-pnpm add <本包路径>          # 本地路径
-pnpm add github:liaowenqi123/dsh-meeting-coordinator   # 或直接从 GitHub 装（会自动构建）
+pnpm add <本包路径>                                     # 本地路径
+pnpm add github:liaowenqi123/dsh-meeting-coordinator    # 或直接从 GitHub 装（无需构建）
 ```
 
 DSH **不读 `dsh-plugin.json`**（那是标准/市场/准入层的清单，用于「安装前可知兼容性」）。
@@ -308,6 +323,13 @@ DSH **不读 `dsh-plugin.json`**（那是标准/市场/准入层的清单，用�
 两者本包都提供：能被真实装载，也能被静态评估。
 
 重启 DSH（或重载 profile）后，会看到一个**会议室面板**，可以建会议室、加会话、召集会议。
+
+### 在插件市场里找它
+
+本仓库带 GitHub topic [`dsh-plugin`](https://github.com/topics/dsh-plugin)，这是社区插件市场
+（如 [dsh-plugin-marketplace](https://github.com/AwesomeHou/dsh-plugin-marketplace)、
+[DSH-Store](https://github.com/AI-Scarlett/DSH-Store)）自动同步的索引源——
+装了市场插件就能直接搜到并一键安装。
 
 ### 验证安装
 
@@ -982,14 +1004,24 @@ tests/
 
 ```
 compatible : YES
-issues     :
-  [warning] unknown-protocol  @ /spec/facets/0/protocols/requires/1 — messages.dsh/v1alpha1 MessageObserver is unknown
-  [warning] unknown-extension @ /spec/facets/0/extensions/0 — extension definition is not installed
-  [warning] unknown-extension @ /spec/facets/0/extensions/1 — extension definition is not installed
+issues     : (无)
 ```
 
-**那三条 warning 是机制在正常工作**：它们在告诉宿主"你还没装 `messages` 协议与 Command
-扩展的 definition，装了我才能完整校验"。这正是"安装前可知兼容性"要暴露的信息。
+**"零 issue" 是刻意修出来的，不是本来就这样。** 发布前这份清单会报 3 条 warning：
+
+```
+[warning] unknown-protocol  — messages.dsh/v1alpha1 MessageObserver is unknown
+[warning] unknown-extension — extension definition is not installed  (×2)
+```
+
+它们本身是机制在正常工作（在说"你还没装 `messages` 协议与 Command 扩展的 definition"），
+但根因是**清单声明了实现里根本不存在的东西**：一个 `MessageObserver` 契约、两个
+`meeting.coordinator.*` 命令。清单是准入契约——市场会照着它给用户显示"这个插件提供 2 个命令"，
+而点下去什么都不会发生。所以那三项被删掉了，只保留真正在跑的东西：
+
+- `requires.contracts` 只留私有协议 `meeting.dsh/v1alpha1 / BriefingBoard`（真的在协商）；
+- `permissions` 只留一条 `messages.observe`，理由改成实际行为（开会时读参会会话的上下文）；
+- `contributes.commands` 是空的。
 
 ### ⚠️ 一个必须知道的事实
 
@@ -1216,10 +1248,14 @@ activationOrder:
   `authorizePermission` 全仓无调用者），插件内自行兜底。
 - ⚠️ **`ScriptedMeetingVoice` 的默认纪要替身**（正则挑行）只用于验证"每人一份且互不相同"，
   **它产出的文本不代表真实质量**。真实质量取决于模型。
-- ⚠️ **`dsh-plugin.json` 里声明的两个命令没有实现**：`meeting.coordinator.convene` /
-  `.status`（`/meeting`、`/meeting-status`）在 src 里零命中。所以目前**唯一的自动召集入口
-  是定时 `pulse()`**；人类想手动开会只能通过返回的句柄调 `orchestrator.convene()`
-  （或面板上的「召集会议」按钮）。
+- ⚠️ **`/meeting`、`/meeting-status` 命令还没做**（src 里零命中）。清单原本声明了这两个命令和
+  一条对应的 `commands` 权限——**发布前已删掉**：清单是给市场和宿主看的准入契约，
+  声明一个点了没反应的命令，等于给用户埋一个必现的 bug。现在
+  `contributes.commands` 是空的，权限只保留真正在做的那条（读参会会话的上下文）。
+  人类想手动开会，走返回句柄的 `orchestrator.convene()` 或面板上的「召集会议」按钮。
+- ⚠️ **`dist/` 是提交进仓库的构建产物**（原因见[第三节](#三安装)：pnpm ≥10 不允许
+  git 依赖跑构建脚本）。所以改了 `src/` 必须 `pnpm run build` 并**把 `dist/` 一起提交**，
+  否则仓库里的产物会与源码漂移。
 - ✅ **`cordis.patch.yml` 里已不再写死 `rootDir`**（发布前已移除本机绝对路径）。
   现在走 `DSH_MEETING_ROOT` 或默认值 `join(process.cwd(), '.dsh-meeting')`。
   要用固定位置请自己打开那一行。注意 config 优先于环境变量（见 5.14）。
@@ -1288,7 +1324,7 @@ activationOrder:
 ### 怎么反馈
 
 - **报 bug** → [开 Issue](https://github.com/liaowenqi123/dsh-meeting-coordinator/issues)。最好附上 `.dsh-meeting/room-meetings.jsonl` 里那一场的记录（它已经**每条发言落盘**了）。
-- **提想法** → 同样开 Issue，或直接发 PR。
+- **提想法** → 同样开 Issue，或直接发 PR。**这个项目现在最缺的就是真实场景的反馈** —— 它在我的机器上跑通了，但边界情况一定还有没覆盖到的。
 - **发 PR** → 跑一下 `pnpm run verify`（一条命令验完），保持绿即可。
 
 ### 开发
@@ -1300,6 +1336,10 @@ pnpm run check:manifest   # 不执行插件代码，静态判定清单兼容性
 pnpm run demo:room        # 会议室机制端到端演示（11 步全断言）
 pnpm run verify           # 上面全部
 ```
+
+> ⚠️ **改了 `src/` 记得 `pnpm run build` 并把 `dist/` 一起提交。**
+> `dist/` 是入库的（原因见[第三节](#三安装)），忘了重建会让仓库里的产物和源码漂移。
+> `pnpm run verify` 最后一步就会跑 `build`，所以正常走它不会漏。
 
 代码地图见[第八节](#八代码地图)。最该先读的 9 个文件在图里用 ★ 标了。
 

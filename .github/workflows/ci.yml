@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 严格类型检查
+        run: pnpm run typecheck
+
+      - name: 清单静态校验（不执行插件代码）
+        run: pnpm run check:manifest
+
+      - name: 单元测试
+        run: pnpm run test
+
+      - name: 构建
+        run: pnpm run build
+
+      # dist/ 是提交进仓库的（pnpm ≥10 不允许 git 依赖执行构建脚本，
+      # 见 README 第三节）。代价是产物可能与 src/ 漂移 —— 这一步专门守它。
+      - name: 检查 dist/ 与 src/ 是否同步
+        run: |
+          if [ -n "$(git status --porcelain dist)" ]; then
+            echo "::error::dist/ 与 src/ 不同步。请在本地跑 'pnpm run build' 并把 dist/ 一起提交。"
+            git --no-pager diff --stat dist
+            exit 1
+          fi
+          echo "dist/ 与 src/ 一致。"
