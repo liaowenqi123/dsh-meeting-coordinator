@@ -43,6 +43,11 @@
       "types": "./dist/facet.d.ts",
       "default": "./dist/facet.js"
     },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "default": "./dist/host.js"
+    },
+    "./dist/host.js": "./dist/host.js",
     "./client": "./client.js"
   },
   "dsh": {

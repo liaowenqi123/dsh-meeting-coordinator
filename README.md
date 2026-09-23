@@ -1033,6 +1033,18 @@ issues     : (无)
 所以本插件**两者都提供**：`dsh-plugin.json` 服务标准/市场/准入层，
 [cordis.patch.yml](cordis.patch.yml) 服务运行时。
 
+### 清单声明的入口，两条路都能走到
+
+`facets.host.entry` 写的是 `dist/host.js`。实测两种寻址方式：
+
+| 寻址方式 | 结果 |
+|---|---|
+| 绝对路径 / `file://` URL 直接加载 | ✅ 加载成功（宿主与市场走这条） |
+| `require.resolve('dsh-meeting-coordinator/dist/host.js')`（按包名 + 子路径） | ⚠️ 原本被 `exports` 挡住（`ERR_PACKAGE_PATH_NOT_EXPORTED`），已在 `exports` 里补上 `./host` 与 `./dist/host.js` 两个子路径 |
+
+补这一条是因为**清单声明了什么，别人就有权按什么去寻址**——声明了 `dist/host.js`
+却在 `exports` 里不给这个子路径，等于给下游埋了一个"按文档走却报错"的坑。
+
 ---
 
 ## 十、分步验证
