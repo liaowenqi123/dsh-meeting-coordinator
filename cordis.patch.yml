@@ -1,0 +1,73 @@
+# DSH 真实装载入口 —— 本包的 `dsh.bundle.patch` 层。
+#
+# 重要事实（已在 @deepseek-ai/dsh@0.1.6-alpha.2 上核实）：
+#   - 内核**不读** dsh-plugin.json。它读 package.json 的 "dsh" 键，
+#     再由 dsh.bundle.patch 指向本文件。缺了这个键，`dsh plugin add` 只会把它
+#     当普通依赖装上并警告 "declares no dsh.bundle"，**不会有任何 patch 层生效**。
+#   - 层序：dsh.profile.bundles 各 bundle 的 patch → profile 自己的 cordis.patch.yml
+#     → --patch 覆盖。profile 层用 `- id:` 定位时 config 是**整体替换**而非深合并
+#     （见 cordis-plugin-include 的 applyEntryPatches），所以本文件里的 config 要写全。
+#   - dsh-plugin.json 服务于标准/市场/准入层（安装前可知兼容性）。
+#
+# insert 的 name 用裸包名：loader 以 profile 目录为 baseUrl 解析裸名，
+# 所以本包必须出现在 profile 的 node_modules 里（link:/file: 软链同样有效）。
+# 绝对路径在这里**不可用**——CLI 启动走的是基础 Include，不会把绝对路径转成
+# file:// URL，Node 会报 ERR_UNSUPPORTED_ESM_URL_SCHEME。
+
+- insert:
+    - id: dsh-meeting-coordinator
+      name: dsh-meeting-coordinator
+      # ⚠️ `inject` 里**只能列 apply() 期间真正需要的服务**，且这些服务必须
+      # 真的存在——**列错的代价是插件永远不激活**（不是报错，是静默 pending）。
+      #
+      # 踩过的两个坑，都在真机 boot 上：
+      #
+      # 1. 把 `sessions` / `tools` 加进来 → 整个 dsh 卡死启动：进程活着、
+      #    零输出、端口不监听。因为 `inject` 会**等**服务出现，而它们在 web
+      #    profile 里不在本入口之前就绪。这两个服务本来就是惰性读取
+      #    （`ctx.get(...)` + 降级），不需要写进来。
+      # 2. 写 `agentTeams` → 用户把 agent-team 那两层从 profile 里删掉之后，
+      #    本插件一直 `pending (waiting for service: agentTeams)`，
+      #    **前端因此完全没有我们的界面**（表现为"插件装了但什么也没有"）。
+      #    新版模型里成员是**用户已有的会话**，发言走一次性子调用，
+      #    根本不需要 agentTeams —— 它只是历史遗留。
+      #
+      # `agents` / `subagents` 由 dsh-web-app 提供，apply() 期间确实要用。
+      inject: [agents, subagents]
+      config:
+        boardDomain: demo
+        # 会议数据落盘位置（简报板 / 会籍 / 会议记录 / 轮次结论都写这里）。
+        # 缺省是 join(process.cwd(), '.dsh-meeting')。
+        #
+        # ⚠️ 这里**故意不写 rootDir**：绝对路径是本机开发期取值，写进去对别人就是
+        # 一个不存在的目录。要用固定位置就自己打开下面这行，或者设环境变量
+        # DSH_MEETING_ROOT：
+        #
+        # rootDir: 'C:/path/to/your/.dsh-meeting'
+        # 入场边界：step-end = 当前工作单元（含其中的工具调用）结束后再入场。
+        entryBoundary: step-end
+        #
+        # ⚠️⚠️ 以下是**默认就不该动**的：本插件装上后应当什么都不做。⚠️⚠️
+        #
+        # 会籍是权限边界，所以默认 **没有房间、没有会籍、没有节律**：
+        #   - 房间由人在会议室面板上建；
+        #   - 成员由人把**非活动**会话一个个加进去（入会要往它的工具集里装东西，
+        #     往正在跑的 Agent 上做这件事会扰动它当前的任务）；
+        #   - 子 Agent（`meta.origin === 'subagent'` / 带 `parentSession`）**不许入会**，
+        #     否则一个会话 spawn N 个子 Agent 就能自我增票。
+        #
+        # 上一版不是这样：`apply()` 会自动建房间、把配置里的 slots 全拉进会、
+        # 再起一个 60 秒定时器（`onStall: true` 让第一轮就判停滞）。
+        # 结果是"插件一装上就自己开始每分钟开会"，而用户既看不到也停不掉。
+        #
+        # 要自动节律必须显式打开下面这一行：
+        # autoPulse: true
+        #
+        # `slots` 仍然可用（预声明的领域成员，会在协调器里登记），
+        # 但**不再自动入会**——要把它们加进某个房间仍需显式操作。
+        # slots:
+        #   - id: live-trading
+        #     domain: quant-live
+        #     title: 实盘与泛化
+        #     model: deepseek-v4.1-flash
+        #     systemPrompt: '你负责实盘执行与泛化验证。'
