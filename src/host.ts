@@ -46,6 +46,7 @@ import {
 } from './facet.js'
 import { MeetingCoordinator, DEFAULT_COORDINATOR_POLICY, type TriggerPolicyPolicy } from './core/coordinator.js'
 import { RoomRegistry } from './core/room-registry.js'
+import { resolveMeetingBoardDomain, resolveMeetingRootDir } from './core/meeting-root.js'
 import { MeetingOrchestrator, type RoomMeetingRecord } from './core/room-orchestrator.js'
 import type { MeetingRoomPolicy } from './core/meeting-room.js'
 import type { MeetingVoicePort } from './ports/meeting-voice.js'
@@ -971,8 +972,12 @@ export async function apply(ctx: DshPluginContextFace, config: MeetingPluginConf
   // 槽位是**可选**的（预声明的领域成员）。默认没有成员、没有房间——
   // 那是正确的初始状态，不是配置错误。
   const slots = config.slots ?? readSlotsFromEnv(process.env)
-  const rootDir = config.rootDir ?? process.env['DSH_MEETING_ROOT'] ?? join(process.cwd(), '.dsh-meeting')
-  const boardDomain = config.boardDomain ?? process.env['DSH_MEETING_BOARD'] ?? 'default'
+  // ⚠️ 默认值**绝不能**是 `join(process.cwd(), ...)`：DSH 进程的 cwd 由
+  // "用户从哪敲下的 dsh web"决定，与会话、工作区都无关，于是数据根会
+  // 悄悄落到一个无关目录里（2026-09-23 实测踩过：房间全丢，且无任何报错）。
+  // 解析规则与理由集中在 `core/meeting-root.ts`，三个入口共用同一份。
+  const rootDir = resolveMeetingRootDir(config.rootDir, process.env)
+  const boardDomain = resolveMeetingBoardDomain(config.boardDomain, process.env)
 
   const resolveCaller = (): unknown => {
     // 上游要求 **exact live Agent**（同一个对象引用）作为授权凭据：
@@ -1437,7 +1442,7 @@ export async function apply(ctx: DshPluginContextFace, config: MeetingPluginConf
   //
   // 但"注册失败"是静默的（工具会直接消失，没人会在意），所以把它**落盘**，
   // 让人有地方查。这是本轮里第二次遇到"静默降级看起来像插件没生效"。
-  const tool = registerMeetingTool({ ctx, console: host.console })
+  const tool = registerMeetingTool({ ctx, console: host.console, rootDir })
   toolDispose = tool.dispose
 
   // 浏览器面板的数据端点（Typert Remote）。

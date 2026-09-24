@@ -216,7 +216,7 @@ pnpm run demo:room
 
 ---
 
-## 二、这个系统坚持的五个不变量
+## 二、这个系统坚持的七个不变量
 
 每一条都有对应的失败断言在测试里，不是口号。
 
@@ -259,7 +259,51 @@ expect(() => room.appendSpeech('a', '一'.repeat(801))).toThrow(/超长/)
 > 但"硬上限 + 分字段预算"有先例（LangChain 的 `max_token_limit` 滚动摘要、
 > Caucus 把工具描述硬裁到 ≤260 字符）。所以本实现的是**机制**，上限是可配默认值。
 
-### 不变量 4：停滞由**外部**计算，不依赖 Agent 自述
+### 不变量 4：数据根不依赖进程 cwd
+
+```ts
+expect(defaultMeetingRootDir(env)).not.toContain(process.cwd())
+```
+
+解析只有一处（`core/meeting-root.ts`），规则是
+`config.rootDir` > `DSH_MEETING_ROOT` > `$DSH_HOME/meeting-coordinator`。
+
+> ⚠️ 这条是**踩出来的**。原默认值是 `join(process.cwd(), '.dsh-meeting')`，
+> 而 DSH 进程的 cwd 由"用户从哪个目录敲 `dsh web`"决定，与会话、工作区都无关。
+> 2026-09-23 实测：重启后数据根落进了一个**完全无关的项目**目录，
+> 会议室全部消失——插件照常启动、面板照常显示，**一个错都不报**。
+> 用 cwd 的失败模式是"静默且看似成功"，所以坐标必须选一个不依赖启动目录的地方。
+
+### 不变量 5：急停是完整闭环，且不依赖房间
+
+```ts
+// 工具写出的路径 === 宿主 stopRequested 读的路径
+expect(existsSync(join(configRoot, 'stop.flag'))).toBe(true)
+// 且不需要 roomId
+expect((await runMeetingTool({ args: { action: 'stop' }, ... })).ok).toBe(true)
+```
+
+这里曾经同时坏了两处，而且是**互相掩护**的：
+
+1. `registerMeetingTool` 根本没接 `rootDir`，自己又推算了一遍 —— 于是只要 config 里
+   给了 `rootDir`，工具写的标志文件和宿主读的**不是同一个文件**；
+2. `roomId` 校验排在 `stop` 分支**之前** —— 于是 `action=stop` 永远走不到自己的分支，
+   一律返回"action=room / convene 需要 roomId"。
+
+两者叠起来的表现是：调用 `stop` 得到 `ok: true` 和一条看似正确的路径，
+**而会议毫无反应**。静默失效的急停比没有急停更糟——人会以为自己已经叫停了。
+现在 `rootDir` 由宿主传入（同源），且 `stop` 不受任何房间前置条件约束。
+
+### 不变量 6：会后纪要必须**每人不同**且**真的更短**
+
+```ts
+expect(new Set(notes.map(n => n.text)).size).toBe(3)   // 每人不同
+// validateMinutes：纪要必须短于会议记录本身，否则拒绝
+```
+
+`validateMinutes` 会拒绝"越压越长"的纪要（那说明模型在抄会议而不是在压缩）、空纪要、超长纪要。
+
+### 不变量 7：停滞由**外部**计算，不依赖 Agent 自述
 
 `detectStall()` 四类信号：`silent-slot`、`stale-briefing`、`repeated-fingerprint`（内容指纹连续重复=空转）、
 `no-progress`。
@@ -270,15 +314,6 @@ expect(() => room.appendSpeech('a', '一'.repeat(801))).toThrow(/超长/)
 
 而且节流故意留了后门：停滞触发（priority 1）**穿透**最小会议间隔——
 "刚开完会就卡死"恰恰是最需要介入的时刻。
-
-### 不变量 5：会后纪要必须**每人不同**且**真的更短**
-
-```ts
-expect(new Set(notes.map(n => n.text)).size).toBe(3)   // 每人不同
-// validateMinutes：纪要必须短于会议记录本身，否则拒绝
-```
-
-`validateMinutes` 会拒绝"越压越长"的纪要（那说明模型在抄会议而不是在压缩）、空纪要、超长纪要。
 
 ---
 
@@ -1269,8 +1304,13 @@ activationOrder:
   git 依赖跑构建脚本）。所以改了 `src/` 必须 `pnpm run build` 并**把 `dist/` 一起提交**，
   否则仓库里的产物会与源码漂移。
 - ✅ **`cordis.patch.yml` 里已不再写死 `rootDir`**（发布前已移除本机绝对路径）。
-  现在走 `DSH_MEETING_ROOT` 或默认值 `join(process.cwd(), '.dsh-meeting')`。
-  要用固定位置请自己打开那一行。注意 config 优先于环境变量（见 5.14）。
+  现在走解析器：`config.rootDir` > `DSH_MEETING_ROOT` > `$DSH_HOME/meeting-coordinator`。
+  要用固定位置就自己打开那一行，或者设环境变量。注意 config 优先于环境变量（见 5.14）。
+- ⚠️ **不要用 `process.cwd()` 类的位置放会议数据**（这是本仓库踩过的真事故，
+  详见[不变量 4](#不变量-4数据根不依赖进程-cwd)）。早于本次修复的版本默认值就是
+  `join(process.cwd(), '.dsh-meeting')`：DSH 从别处启动，数据根就落到一个无关项目里，
+  房间静默消失且不报任何错。**如果你的旧数据在某个项目的 `.dsh-meeting/` 下，
+  升级后需要手动搬一下，或把 `DSH_MEETING_ROOT` 指向它。**
 - ⚠️ **端到端测试会在用户的 dsh 里留下痕迹**：若干 `ABC *` 标题的测试会话、
   若干 `e2e-*` 房间与会议记录。这是与开发实例共享数据根的代价，清理要谨慎
   （没有 deleteRoom API），目前选择接受。

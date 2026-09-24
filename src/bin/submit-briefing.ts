@@ -42,6 +42,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BoardCorrupted, BriefingBoard } from '../core/briefing-board.js'
+import { resolveMeetingBoardDomain, resolveMeetingRootDir } from '../core/meeting-root.js'
 import {
   BriefingBudgetExceeded,
   BriefingInvalid,
@@ -271,8 +272,10 @@ export function submitBriefing(input: SubmitBriefingInput): number {
   }
 
   // 坐标解析顺序刻意与 host.ts 的 apply() 一致：flag > env > 默认值。
-  const rootDir = opts.rootDir ?? env['DSH_MEETING_ROOT'] ?? join(cwd, '.dsh-meeting')
-  const boardDomain = opts.boardDomain ?? env['DSH_MEETING_BOARD'] ?? 'default'
+  // 默认值那段逻辑**共用** core/meeting-root.ts，不再各写一份——
+  // 三处独立推算同一个坐标，正是急停失效与数据根漂移的成因。
+  const rootDir = resolveMeetingRootDir(opts.rootDir, env)
+  const boardDomain = resolveMeetingBoardDomain(opts.boardDomain, env)
   const maxBriefingChars =
     opts.maxChars ?? positiveInteger(env['DSH_MEETING_MAX_BRIEFING_CHARS']) ?? DEFAULT_MAX_BRIEFING_CHARS
   const maxAgendaChars =

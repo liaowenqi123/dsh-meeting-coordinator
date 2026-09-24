@@ -49,6 +49,16 @@ export interface RegisterMeetingToolOptions {
      */
     readonly ctx: unknown;
     readonly console: MeetingConsole;
+    /**
+     * 会议数据根。**必须由宿主传入**，不要在工具里自己算。
+     *
+     * 曾经这里自己算了一遍 `DSH_MEETING_ROOT ?? join(cwd, '.dsh-meeting')`，
+     * 结果是：只要在 config 里显式给了 `rootDir`（`cordis.patch.yml` 里就给了），
+     * 工具写的 `stop.flag` 与宿主 `stopRequested` 读的**就不是同一个文件**——
+     * 急停看上去"成功"了，实际什么也没停。两处独立推算同一个坐标，
+     * 迟早会不一致；传进来是唯一能保证同源的做法。
+     */
+    readonly rootDir: string;
 }
 export interface MeetingToolRegistration {
     readonly registered: boolean;
@@ -77,6 +87,11 @@ export declare function runMeetingTool(input: {
     readonly console: MeetingConsole;
     readonly args: unknown;
     readonly exec?: DshToolRunContextFace | undefined;
+    /**
+     * 会议数据根。**必填**——留着可选就等于允许调用方漏传，
+     * 而漏传的后果是急停静默失效（见 `RegisterMeetingToolOptions.rootDir`）。
+     */
+    readonly rootDir: string;
 }): Promise<unknown>;
 export { HUMAN_PARTICIPANT };
 //# sourceMappingURL=dsh-meeting-tool.d.ts.map

@@ -134,7 +134,7 @@ export function registerMeetingTool(options) {
             ],
         },
         async execute(args, exec) {
-            return runMeetingTool({ console: options.console, args, exec });
+            return runMeetingTool({ console: options.console, args, exec, rootDir: options.rootDir });
         },
     };
     let dispose = () => undefined;
@@ -173,6 +173,24 @@ export async function runMeetingTool(input) {
             hint: overview.myRoomIds.length === 0
                 ? '你还没有加入任何会议室。加入需要人类在会议室面板上操作（且只允许在你非活动时进行）。'
                 : undefined,
+        };
+    }
+    // ⚠️ `stop` 必须排在 roomId 校验**之前**。
+    //
+    // 它曾经排在这道校验后面，于是 `action=stop` 一律返回
+    // "action=room / convene 需要 roomId" —— **急停通道整个是死的**，
+    // 而且报错信息还在误导人以为是自己没给 roomId。
+    // 急停是"停一切"，天然不需要指定房间；它也不该被任何房间相关的
+    // 前置条件挡住——否则最需要它的时候（房间状态已经乱了）它恰好不工作。
+    if (action === 'stop') {
+        // 写 stop.flag：协调器每步检查它，当前这场会会立刻散会并落盘。
+        // 这是 UI 里没有"暂停/停会按钮"时的外部急停通道（实测暴露的缺口）。
+        const flagPath = stopFlagPath(input.rootDir);
+        writeFileSync(flagPath, `${new Date().toISOString()} 被要求停止\n`, 'utf8');
+        return {
+            ok: true,
+            note: `已写入停会标志 ${flagPath}。正在进行的会议会在下一步散会并把已发生的发言落盘；` +
+                '重启后 reconcileLive() 会把半途的转录补写进会议记录。',
         };
     }
     const roomId = typeof args['roomId'] === 'string' && args['roomId'].length > 0 ? args['roomId'] : undefined;
@@ -218,17 +236,6 @@ export async function runMeetingTool(input) {
                 : '以上是只与你相关的那份纪要。会议中间过程与你无关，不必追问。',
         };
     }
-    if (action === 'stop') {
-        // 写 stop.flag：协调器每步检查它，当前这场会会立刻散会并落盘。
-        // 这是 UI 里没有"暂停/停会按钮"时的外部急停通道（实测暴露的缺口）。
-        const flagPath = stopFlagPath();
-        writeFileSync(flagPath, `${new Date().toISOString()} 被要求停止\n`, 'utf8');
-        return {
-            ok: true,
-            note: `已写入停会标志 ${flagPath}。正在进行的会议会在下一步散会并把已发生的发言落盘；` +
-                '重启后 reconcileLive() 会把半途的转录补写进会议记录。',
-        };
-    }
     return { ok: false, reason: `未知 action：${action}。可用：overview / room / convene / stop。` };
 }
 /**
@@ -236,13 +243,14 @@ export async function runMeetingTool(input) {
  *
  * 与 `host.ts` 里 `stopRequested` 读的是**同一个文件**——
  * 一边写一边读，才能构成"外部急停"这条闭环。
+ *
+ * `rootDir` 由宿主传入（与 `host.ts` 用的是同一个解析结果），
+ * 所以这里**不再自己推算**：两处独立推算同一个坐标，迟早会不一致，
+ * 而这次不一致的代价是急停静默失效。
  */
-function stopFlagPath() {
-    // 会议数据的根目录就是会议记录所在目录的父级；用相对路径定位，
-    // 避免工具与宿主各自算出不同的 rootDir。
-    const base = process.env['DSH_MEETING_ROOT'] ?? join(process.cwd(), '.dsh-meeting');
-    mkdirSync(base, { recursive: true });
-    return join(base, 'stop.flag');
+function stopFlagPath(rootDir) {
+    mkdirSync(rootDir, { recursive: true });
+    return join(rootDir, 'stop.flag');
 }
 function readCallerId(exec) {
     const agent = exec?.agent;
